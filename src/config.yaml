@@ -2,7 +2,10 @@ weak_clients_num: 2
 
 strong_clients_num: 2
 
+epochs: 10
 
+# cuda or cpu
+device: "cuda"
 
 lr: 0.01
 
