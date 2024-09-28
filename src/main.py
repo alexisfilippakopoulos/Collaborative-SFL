@@ -6,6 +6,7 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 import threading
 from torch import nn
+from copy import deepcopy
 
 SEED = 32
 
@@ -64,13 +65,64 @@ def forward_pass_clients(weak_model, strong_model, iterator, criterion, device, 
     losses[idx] = loss
     return
 
-def forward_pass_server(server_model, device, inputs, targets, criterion, losses, idx):
+def forward_pass_server(server_model: nn.Module, device: torch.device, inputs: torch.tensor, targets: torch.tensor, criterion: nn, losses: list, idx: int):
     server_model.to(device)
     inputs, targets = inputs.to(device), targets.to(device)
     outputs = server_model(inputs)
     loss = criterion(outputs, targets)
     losses[idx] = loss
     return
+
+def federated_averaging(models: list[dict], datasizes: list[int], device: torch.device):
+    avg_weights = {}
+    total_data = sum(datasizes)
+    for i, model in enumerate(models):
+        for layer, weights in model.items():
+            weights = weights.to(device)
+            if layer not in avg_weights.keys():
+                avg_weights[layer] = weights * (datasizes[i] / total_data)
+            else:
+                avg_weights[layer] += weights * (datasizes[i] / total_data)
+    return avg_weights
+
+
+def client_aggregation(data_dict: dict[dict], device):
+    strong_model_weights = [None] * len(data_dict.keys())
+    weak_model_weights = [None] *  len(data_dict.keys())
+    datasizes = [None] *  len(data_dict.keys())
+
+    for client, metadata in data_dict.items():
+        strong_model_weights[client] = deepcopy(metadata["strong_model"].state_dict())
+        weak_model_weights[client] = deepcopy(metadata["weak_model"].state_dict())
+        datasizes[client] = metadata["datasize"]
+
+    aggr_weak_model = federated_averaging(weak_model_weights, datasizes, device)
+    aggr_strong_model = federated_averaging(strong_model_weights, datasizes, device)
+
+    # load aggregated weights on each model instance
+    for client, metadata in data_dict.items():
+        metadata["strong_model"].load_state_dict(aggr_strong_model)
+        metadata["weak_model"].load_state_dict(aggr_weak_model)
+
+    print("[+] Aggregated client-side models")
+    return data_dict    
+
+def server_aggregation(data_dict: dict[dict], device):
+    datasizes = [None] *  len(data_dict.keys())
+    server_model_weights = [None] * len(data_dict.keys())
+
+    for client, metadata in data_dict.items():
+        server_model_weights[client] = deepcopy(metadata["server_model"].state_dict())
+        datasizes[client] = metadata["datasize"]
+
+    aggr_server_model = federated_averaging(server_model_weights, datasizes, device)
+
+    # load aggregated weights on each model instance
+    for client, metadata in data_dict.items():
+        metadata["server_model"].load_state_dict(aggr_server_model)
+
+    print("[+] Aggregated server-side models")
+    return data_dict
 
 
 def train_both_parties(data_dict, epochs, criterion, device):
@@ -124,6 +176,9 @@ def train_both_parties(data_dict, epochs, criterion, device):
 
             for client, metadata in data_dict.items():
                 metadata['server_optim'].step()
+
+        data_dict = client_aggregation(data_dict=data_dict, device=device)
+        data_dict = server_aggregation(data_dict=data_dict, device=device)
 
 
                 
