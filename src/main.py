@@ -124,14 +124,8 @@ def server_aggregation(data_dict: dict[dict], device):
     print("[+] Aggregated server-side models")
     return data_dict
 
-
-def train_both_parties(data_dict, epochs, criterion, device):
-    for e in range(epochs):
-        print(f"[+] Epoch: {e + 1}")
-        for client, metadata in data_dict.items():
-            metadata["data_iter"] = iter(metadata["dataloader"])
-
-        for _ in range(int(data_dict[0]["num_batches"])):
+def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
+    for _ in range(int(data_dict[0]["num_batches"])):
             # List holding the client-side's outputs
             server_inputs = [None] * len(data_dict.keys())
             client_targets = [None] * len(data_dict.keys())
@@ -177,15 +171,23 @@ def train_both_parties(data_dict, epochs, criterion, device):
             for client, metadata in data_dict.items():
                 metadata['server_optim'].step()
 
-        data_dict = client_aggregation(data_dict=data_dict, device=device)
-        data_dict = server_aggregation(data_dict=data_dict, device=device)
+    return data_dict
 
 
-                
+def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
+    for e in range(epochs):
+        print(f"[+] Epoch: {e + 1}")
 
-             
+        for _, metadata in data_dict.items():
+            metadata["data_iter"] = iter(metadata["dataloader"])
 
-            
+        data_dict = train_one_epoch(data_dict=data_dict, criterion=criterion, device=device)
+
+        if (e + 1) % fed_avg_freq == 0:
+            data_dict = client_aggregation(data_dict=data_dict, device=device)
+            data_dict = server_aggregation(data_dict=data_dict, device=device)
+
+    return data_dict
 
 
 
@@ -197,7 +199,7 @@ def main():
     set_all_seeds(cfg["seed"])
     data_dict = populate_dict(data_dict=data_dict, seed=cfg["seed"], lr=cfg["lr"])
     criterion = nn.CrossEntropyLoss()
-    train_both_parties(data_dict, cfg["epochs"], criterion, device)
+    data_dict = train_both_parties(data_dict=data_dict, epochs=cfg["epochs"], criterion=criterion, device=device, fed_avg_freq=cfg["fed_avg_freq"])
 
 if __name__ == "__main__":
     main()
