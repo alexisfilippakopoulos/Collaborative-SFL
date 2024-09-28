@@ -14,7 +14,7 @@ def create_dict(num_clients):
     for i in range(num_clients):
         data_dict[i] = {"weak_model": None, "strong_model": None, "server_model": None,
                         "weak_optim": None, "strong_optim": None, "server_optim": None,
-                        "data_iter": None, "datasize": None, "num_batches": None}
+                        "dataloader": None, "data_iter": None, "datasize": None, "num_batches": None}
         
     return data_dict
 
@@ -28,7 +28,7 @@ def set_all_seeds(seed) -> None:
 
 def load_data(subset_path, batch_size, shuffle):
         subset = torch.load(f=subset_path)
-        return iter(DataLoader(subset, batch_size=batch_size, shuffle=shuffle, num_workers=2, pin_memory=True)), len(subset), np.ceil(len(subset) / batch_size)
+        return DataLoader(subset, batch_size=batch_size, shuffle=shuffle, num_workers=2, pin_memory=True), len(subset), np.ceil(len(subset) / batch_size)
 
 def populate_dict(data_dict, seed, lr):
     print(f"[+] Instanciating models and optimizers")
@@ -42,7 +42,7 @@ def populate_dict(data_dict, seed, lr):
         torch.manual_seed(seed)
         data_dict[cid]["server_model"] = ServerModel()
         data_dict[cid]["server_optim"] = torch.optim.SGD(params=data_dict[cid]["server_model"].parameters(), lr=lr)
-        data_dict[cid]["data_iter"], data_dict[cid]["datasize"], data_dict[cid]["num_batches"] = load_data(subset_path=f"/home/alex/Desktop/ASOEE/split_yannis/Collaboirative-SFL/subset_data/sub_{cid}.pth", batch_size=32, shuffle=True)
+        data_dict[cid]["dataloader"], data_dict[cid]["datasize"], data_dict[cid]["num_batches"] = load_data(subset_path=f"/home/alex/Desktop/ASOEE/split_yannis/Collaboirative-SFL/subset_data/sub_{cid}.pth", batch_size=32, shuffle=True)
     return data_dict
 
 
@@ -65,9 +65,6 @@ def forward_pass_clients(weak_model, strong_model, iterator, criterion, device, 
     return
 
 def forward_pass_server(server_model, device, inputs, targets, criterion, losses, idx):
-    """print(inputs)
-    print(inputs.__class__)
-    exit()"""
     server_model.to(device)
     inputs, targets = inputs.to(device), targets.to(device)
     outputs = server_model(inputs)
@@ -79,7 +76,10 @@ def forward_pass_server(server_model, device, inputs, targets, criterion, losses
 def train_both_parties(data_dict, epochs, criterion, device):
     for e in range(epochs):
         print(f"[+] Epoch: {e + 1}")
-        for batch in range(int(data_dict[0]["num_batches"])):
+        for client, metadata in data_dict.items():
+            metadata["data_iter"] = iter(metadata["dataloader"])
+
+        for _ in range(int(data_dict[0]["num_batches"])):
             # List holding the client-side's outputs
             server_inputs = [None] * len(data_dict.keys())
             client_targets = [None] * len(data_dict.keys())
