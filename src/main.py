@@ -9,7 +9,7 @@ from torch import nn
 from copy import deepcopy
 import warnings
 from sklearn.metrics import precision_recall_fscore_support
-
+import pandas as pd
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -185,6 +185,7 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
 
 
 def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
+    stats_df = pd.DataFrame(columns=['epoch', "avg_client_mean_loss", "avg_server_mean_loss", 'client_precision', 'server_precision', 'client_recall', "server_recall", "client_f1_score", "server_f1_score"])
     for e in tqdm(range(epochs)):
         print(f"[+] Epoch: {e + 1}")
         # create a dataloader iterator for current epoch
@@ -195,7 +196,8 @@ def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
         
         print(f"\t[+] Average Client-Side Mean Loss: {avg_client_mean_loss}")
         print(f"\t[+] Average Server-Side Mean Loss: {avg_server_mean_loss}")
-
+        server_accuracy, server_precision, server_recall, server_f1_score = None, None, None, None
+        client_accuracy, client_precision, client_recall, client_f1_score = None, None, None, None
         # if it's time to aggregate do
         if (e + 1) % fed_avg_freq == 0:
             aggr_strong_model, aggr_weak_model = client_aggregation(data_dict=data_dict, device=device)
@@ -207,8 +209,10 @@ def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
                 metadata["weak_model"].load_state_dict(aggr_weak_model)
                 metadata["server_model"].load_state_dict(aggr_server_model)
 
-            evaluate_aggr_models(weak_model=data_dict[0]["weak_model"], strong_model=data_dict[0]["strong_model"], server_model=data_dict[0]["server_model"], test_dl_path="/home/alex/Desktop/ASOEE/split_yannis/Collaboirative-SFL/subset_data/sub_test.pth", device=device)
+            server_accuracy, server_precision, server_recall, server_f1_score, client_accuracy, client_precision, client_recall, client_f1_score = evaluate_aggr_models(weak_model=data_dict[0]["weak_model"], strong_model=data_dict[0]["strong_model"], server_model=data_dict[0]["server_model"], test_dl_path="/home/alex/Desktop/ASOEE/split_yannis/Collaboirative-SFL/subset_data/sub_test.pth", device=device)
 
+        stats_df.loc[len(stats_df)] = {'epoch': e + 1, 'avg_client_mean_loss': avg_client_mean_loss, 'avg_server_mean_loss': avg_server_mean_loss, 'client_acc': client_accuracy, 'server_acc': server_accuracy, 'client_precision': client_precision, 'server_precision': server_precision, 'client_recall': client_recall, 'server_recall': server_recall, 'client_f1_score': client_f1_score, 'server_f1_score': server_f1_score}
+        stats_df.to_csv("results.csv")
     return data_dict
 
 def evaluate_aggr_models(weak_model: nn, strong_model: nn, server_model: nn, test_dl_path: str, device: torch.device):
@@ -241,8 +245,8 @@ def evaluate_aggr_models(weak_model: nn, strong_model: nn, server_model: nn, tes
     server_precision, server_recall, server_f1_score, _ = precision_recall_fscore_support(Y_true, Y_server, average='weighted', zero_division=0.0)
     client_precision, client_recall, client_f1_score, _ = precision_recall_fscore_support(Y_true, Y_client, average='weighted', zero_division=0.0)
 
-    print(f"\t[+]Server-Side Evaluation:\n\t\tAccuracy: {server_accuracy}\n\t\tPrecision: {server_precision: .4f}\n\t\tRecall: {server_recall: .4f}\n\t\tF1-Score: {server_f1_score: .4f}")
-    print(f"\t[+]Client-Side Evaluation:\n\t\tAccuracy: {client_accuracy}\n\t\tPrecision: {client_precision: .4f}\n\t\tRecall: {client_recall: .4f}\n\t\tF1-Score: {client_f1_score: .4f}")
+    print(f"\t[+] Server-Side Evaluation:\n\t\tAccuracy: {server_accuracy}\n\t\tPrecision: {server_precision: .4f}\n\t\tRecall: {server_recall: .4f}\n\t\tF1-Score: {server_f1_score: .4f}")
+    print(f"\t[+] Client-Side Evaluation:\n\t\tAccuracy: {client_accuracy}\n\t\tPrecision: {client_precision: .4f}\n\t\tRecall: {client_recall: .4f}\n\t\tF1-Score: {client_f1_score: .4f}")
 
     return server_accuracy, server_precision, server_recall, server_f1_score, client_accuracy, client_precision, client_recall, client_f1_score
             
