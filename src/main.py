@@ -149,11 +149,11 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
             mean_client_loss = torch.stack(losses).mean()
             mean_client_loss.backward()
             curr_clients_mean_loss += mean_client_loss.item()
-
             # update client-side models
             for client, metadata in data_dict.items():
                 metadata['weak_optim'].step(), metadata['strong_optim'].step()
-
+                # offload models to cpu
+                metadata["weak_model"], metadata["strong_model"] = metadata["weak_model"].to(torch.device("cpu")), metadata["strong_model"].to(torch.device("cpu"))
             # server-side forward propagation in parallel
             losses = [None] * len(data_dict.keys())
             threads = []
@@ -175,6 +175,8 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
             # update server-side models
             for client, metadata in data_dict.items():
                 metadata['server_optim'].step()
+                # offload models to cpu
+                metadata['server_model'] = metadata['server_model'].to(torch.device("cpu"))
 
     avg_client_mean_loss = round(curr_clients_mean_loss / data_dict[0]["num_batches"], 4)
     avg_server_mean_loss = round(curr_server_mean_loss / data_dict[0]["num_batches"], 4)
@@ -190,7 +192,7 @@ def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
             metadata["data_iter"] = iter(metadata["dataloader"])
         # train for one epoch
         data_dict, avg_client_mean_loss, avg_server_mean_loss = train_one_epoch(data_dict=data_dict, criterion=criterion, device=device)
-
+        
         print(f"\t[+] Average Client-Side Mean Loss: {avg_client_mean_loss}")
         print(f"\t[+] Average Server-Side Mean Loss: {avg_server_mean_loss}")
 
