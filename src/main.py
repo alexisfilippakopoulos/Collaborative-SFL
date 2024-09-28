@@ -8,9 +8,10 @@ import threading
 from torch import nn
 from copy import deepcopy
 import warnings
+from sklearn.metrics import precision_recall_fscore_support
+
 
 warnings.filterwarnings("ignore", category=FutureWarning)
-
 
 SEED = 32
 
@@ -103,15 +104,11 @@ def client_aggregation(data_dict: dict[dict], device):
     aggr_weak_model = federated_averaging(weak_model_weights, datasizes, device)
     aggr_strong_model = federated_averaging(strong_model_weights, datasizes, device)
 
-    # load aggregated weights on each model instance
-    for client, metadata in data_dict.items():
-        metadata["strong_model"].load_state_dict(aggr_strong_model)
-        metadata["weak_model"].load_state_dict(aggr_weak_model)
-
     print("\t[+] Aggregated Client-Side Models")
-    return data_dict    
+    return aggr_strong_model, aggr_weak_model    
 
 def server_aggregation(data_dict: dict[dict], device):
+    # lists to save number of data samples and model weights for each client
     datasizes = [None] *  len(data_dict.keys())
     server_model_weights = [None] * len(data_dict.keys())
 
@@ -119,14 +116,11 @@ def server_aggregation(data_dict: dict[dict], device):
         server_model_weights[client] = deepcopy(metadata["server_model"].state_dict())
         datasizes[client] = metadata["datasize"]
 
+    # aggregate
     aggr_server_model = federated_averaging(server_model_weights, datasizes, device)
 
-    # load aggregated weights on each model instance
-    for client, metadata in data_dict.items():
-        metadata["server_model"].load_state_dict(aggr_server_model)
-
     print("\t[+] Aggregated Server-Side Models")
-    return data_dict
+    return aggr_server_model
 
 def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
     curr_clients_mean_loss = 0.
@@ -139,6 +133,7 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
             threads = []
             # for each batch
             for client, metadata in data_dict.items():
+                metadata["weak_model"].train(), metadata["strong_model"].train()
                 # clear the gradients in all optimizers
                 metadata['weak_optim'].zero_grad(), metadata['strong_optim'].zero_grad(), metadata['server_optim'].zero_grad()
                 # client-side forward propagation in parallel
@@ -146,6 +141,7 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
                 threads.append(thread)
                 thread.start()
 
+            # wait all forward propagations
             for thread in threads:
                 thread.join()
             
@@ -154,18 +150,20 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
             mean_client_loss.backward()
             curr_clients_mean_loss += mean_client_loss.item()
 
+            # update client-side models
             for client, metadata in data_dict.items():
                 metadata['weak_optim'].step(), metadata['strong_optim'].step()
 
-            losses = [None] * len(data_dict.keys())
-
             # server-side forward propagation in parallel
+            losses = [None] * len(data_dict.keys())
             threads = []
             for idx, (inputs, targets) in enumerate(zip(server_inputs, client_targets)):
+                data_dict[idx]["server_model"].train()
                 thread = threading.Thread(target=forward_pass_server, args=(data_dict[idx]["server_model"], device, inputs, targets, criterion, losses, idx))
                 threads.append(thread)
                 thread.start()
 
+            # wait all forward propagations
             for thread in threads:
                 thread.join()
 
@@ -174,6 +172,7 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
             mean_server_loss.backward()
             curr_server_mean_loss += mean_server_loss.item()
 
+            # update server-side models
             for client, metadata in data_dict.items():
                 metadata['server_optim'].step()
 
@@ -197,10 +196,54 @@ def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
 
         # if it's time to aggregate do
         if (e + 1) % fed_avg_freq == 0:
-            data_dict = client_aggregation(data_dict=data_dict, device=device)
-            data_dict = server_aggregation(data_dict=data_dict, device=device)
+            aggr_strong_model, aggr_weak_model = client_aggregation(data_dict=data_dict, device=device)
+            aggr_server_model = server_aggregation(data_dict=data_dict, device=device)
+
+            # load aggregated weights on each model instance
+            for client, metadata in data_dict.items():
+                metadata["strong_model"].load_state_dict(aggr_strong_model)
+                metadata["weak_model"].load_state_dict(aggr_weak_model)
+                metadata["server_model"].load_state_dict(aggr_server_model)
+
+            evaluate_aggr_models(weak_model=data_dict[0]["weak_model"], strong_model=data_dict[0]["strong_model"], server_model=data_dict[0]["server_model"], test_dl_path="/home/alex/Desktop/ASOEE/split_yannis/Collaboirative-SFL/subset_data/sub_test.pth", device=device)
 
     return data_dict
+
+def evaluate_aggr_models(weak_model: nn, strong_model: nn, server_model: nn, test_dl_path: str, device: torch.device):
+    dataloader = DataLoader(dataset=torch.load(test_dl_path), batch_size=32, shuffle=False, num_workers=2, pin_memory=True)
+    weak_model.to(device), strong_model.to(device), server_model.to(device)
+    weak_model.eval(), strong_model.eval(), server_model.eval()
+    Y_true, Y_client, Y_server = [], [], []
+    client_correct, server_correct, total = 0, 0, 0
+    with torch.inference_mode():
+        for i, (inputs, targets) in enumerate(dataloader):
+            inputs, targets = inputs.to(device), targets.to(device)
+            # inference
+            weak_outputs = weak_model(inputs)
+            client_outputs = strong_model(weak_outputs)
+            server_outputs = server_model(weak_outputs)
+            # get both side preds
+            _, client_preds = torch.max(client_outputs, dim=1)
+            _, server_preds = torch.max(server_outputs, dim=1)
+            # calculate how many are correct
+            client_correct += (client_preds == targets).sum().item()
+            server_correct += (server_preds == targets).sum().item()
+            total += targets.size(0)
+            # save preds for each data sample in the dataloader
+            Y_true.extend(targets.detach().cpu().numpy())
+            Y_client.extend(client_preds.detach().cpu().numpy())
+            Y_server.extend(server_preds.detach().cpu().numpy())
+
+    server_accuracy = round((server_correct / total) * 100, 2)
+    client_accuracy = round((client_correct / total) * 100, 2)
+    server_precision, server_recall, server_f1_score, _ = precision_recall_fscore_support(Y_true, Y_server, average='weighted', zero_division=0.0)
+    client_precision, client_recall, client_f1_score, _ = precision_recall_fscore_support(Y_true, Y_client, average='weighted', zero_division=0.0)
+
+    print(f"\t[+]Server-Side Evaluation:\n\t\tAccuracy: {server_accuracy}\n\t\tPrecision: {server_precision: .4f}\n\t\tRecall: {server_recall: .4f}\n\t\tF1-Score: {server_f1_score: .4f}")
+    print(f"\t[+]Client-Side Evaluation:\n\t\tAccuracy: {client_accuracy}\n\t\tPrecision: {client_precision: .4f}\n\t\tRecall: {client_recall: .4f}\n\t\tF1-Score: {client_f1_score: .4f}")
+
+    return server_accuracy, server_precision, server_recall, server_f1_score, client_accuracy, client_precision, client_recall, client_f1_score
+            
 
 
 

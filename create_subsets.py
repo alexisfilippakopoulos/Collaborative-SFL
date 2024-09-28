@@ -2,6 +2,7 @@ from torch.utils.data import Subset
 from torch import save
 from torchvision import datasets, transforms
 import os
+import numpy as np
 
 
 def get_data(transform, cifar_flag):
@@ -22,7 +23,7 @@ def sort_dataset(data):
         class_to_indices[cl] = []
     
     for i in range(len(data)):
-        class_to_indices[data.targets[i]].append(i)
+        class_to_indices[int(data.targets[i])].append((i))
 
     return class_to_indices
 
@@ -56,7 +57,9 @@ if __name__ == '__main__':
     #transform = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     train_data, test_data = get_data(transform=transform, cifar_flag=True)
     class_to_indices = sort_dataset(data=train_data)
-    create_subset(data=train_data, class_to_indices=class_to_indices, classes=[0, 4], path='subset_data/sub_0.pth')
-    create_subset(data=train_data, class_to_indices=class_to_indices, classes=[1, 5], path='subset_data/sub_1.pth')
-    create_subset(data=train_data, class_to_indices=class_to_indices, classes=[2, 6], path='subset_data/sub_2.pth')
-    create_subset(data=train_data, class_to_indices=class_to_indices, classes=[3, 7], path='subset_data/sub_3.pth')
+    create_subset(data=train_data, class_to_indices=class_to_indices, classes=[0], path='subset_data/sub_0.pth')
+    create_subset(data=train_data, class_to_indices=class_to_indices, classes=[1], path='subset_data/sub_1.pth')
+    create_subset(data=train_data, class_to_indices=class_to_indices, classes=[2], path='subset_data/sub_2.pth')
+    create_subset(data=train_data, class_to_indices=class_to_indices, classes=[3], path='subset_data/sub_3.pth')
+    class_to_indices = sort_dataset(data=test_data)
+    create_subset(data=test_data, class_to_indices=class_to_indices, classes=np.arange(0, 4), path='subset_data/sub_test.pth')

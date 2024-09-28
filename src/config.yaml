@@ -2,9 +2,9 @@ weak_clients_num: 2
 
 strong_clients_num: 2
 
-epochs: 10
+epochs: 30
 
-fed_avg_freq: 2
+fed_avg_freq: 1
 
 # cuda or cpu
 device: "cuda"
