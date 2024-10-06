@@ -48,7 +48,7 @@ def populate_dict(data_dict, seed, lr):
         torch.manual_seed(seed)
         data_dict[cid]["server_model"] = ServerModel()
         data_dict[cid]["server_optim"] = torch.optim.SGD(params=data_dict[cid]["server_model"].parameters(), lr=lr)
-        data_dict[cid]["dataloader"], data_dict[cid]["datasize"], data_dict[cid]["num_batches"] = load_data(subset_path=f"/home/alex/Desktop/ASOEE/split_yannis/Collaboirative-SFL/subset_data/sub_{cid}.pth", batch_size=32, shuffle=True)
+        data_dict[cid]["dataloader"], data_dict[cid]["datasize"], data_dict[cid]["num_batches"] = load_data(subset_path=f"subset_data/sub_{cid}.pth", batch_size=32, shuffle=True)
     return data_dict
 
 
@@ -209,7 +209,7 @@ def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
                 metadata["weak_model"].load_state_dict(aggr_weak_model)
                 metadata["server_model"].load_state_dict(aggr_server_model)
 
-            server_accuracy, server_precision, server_recall, server_f1_score, client_accuracy, client_precision, client_recall, client_f1_score = evaluate_aggr_models(weak_model=data_dict[0]["weak_model"], strong_model=data_dict[0]["strong_model"], server_model=data_dict[0]["server_model"], test_dl_path="/home/alex/Desktop/ASOEE/split_yannis/Collaboirative-SFL/subset_data/sub_test.pth", device=device)
+            server_accuracy, server_precision, server_recall, server_f1_score, client_accuracy, client_precision, client_recall, client_f1_score = evaluate_aggr_models(weak_model=data_dict[0]["weak_model"], strong_model=data_dict[0]["strong_model"], server_model=data_dict[0]["server_model"], test_dl_path="subset_data/sub_test.pth", device=device)
 
         stats_df.loc[len(stats_df)] = {'epoch': e + 1, 'avg_client_mean_loss': avg_client_mean_loss, 'avg_server_mean_loss': avg_server_mean_loss, 'client_acc': client_accuracy, 'server_acc': server_accuracy, 'client_precision': client_precision, 'server_precision': server_precision, 'client_recall': client_recall, 'server_recall': server_recall, 'client_f1_score': client_f1_score, 'server_f1_score': server_f1_score}
         stats_df.to_csv("results.csv")
@@ -254,7 +254,7 @@ def evaluate_aggr_models(weak_model: nn, strong_model: nn, server_model: nn, tes
 
 
 def main():
-    cfg = read_config("/home/alex/Desktop/ASOEE/split_yannis/Collaboirative-SFL/src/config.yaml")
+    cfg = read_config("src/config.yaml")
     num_clients = cfg["weak_clients_num"] + cfg["strong_clients_num"]
     data_dict = create_dict(num_clients=num_clients)
     device = torch.device(cfg["device"])
