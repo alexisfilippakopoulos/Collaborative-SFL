@@ -4,3 +4,4 @@ src/__pycache__/
 src/pract.ipynb
 results.csv
 results_100_fmnist.csv
+experiments/

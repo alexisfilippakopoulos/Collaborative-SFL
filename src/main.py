@@ -10,10 +10,9 @@ from copy import deepcopy
 import warnings
 from sklearn.metrics import precision_recall_fscore_support
 import pandas as pd
+import os
 
 warnings.filterwarnings("ignore", category=FutureWarning)
-
-SEED = 32
 
 def create_dict(num_clients):
     data_dict = {}
@@ -50,8 +49,6 @@ def populate_dict(data_dict, seed, lr):
         data_dict[cid]["server_optim"] = torch.optim.SGD(params=data_dict[cid]["server_model"].parameters(), lr=lr)
         data_dict[cid]["dataloader"], data_dict[cid]["datasize"], data_dict[cid]["num_batches"] = load_data(subset_path=f"subset_data/sub_{cid}.pth", batch_size=32, shuffle=True)
     return data_dict
-
-
 
 def read_config(file_path):
     with open(file_path, 'r') as file:
@@ -129,7 +126,7 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
             # List holding the client-side's outputs
             server_inputs = [None] * len(data_dict.keys())
             client_targets = [None] * len(data_dict.keys())
-            losses = [None] * len(data_dict.keys())
+            client_losses = [None] * len(data_dict.keys())
             threads = []
             # for each batch
             for client, metadata in data_dict.items():
@@ -137,7 +134,7 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
                 # clear the gradients in all optimizers
                 metadata['weak_optim'].zero_grad(), metadata['strong_optim'].zero_grad(), metadata['server_optim'].zero_grad()
                 # client-side forward propagation in parallel
-                thread = threading.Thread(target=forward_pass_clients, args=(metadata["weak_model"], metadata["strong_model"], metadata["data_iter"], criterion, device, server_inputs, losses, client, client_targets))
+                thread = threading.Thread(target=forward_pass_clients, args=(metadata["weak_model"], metadata["strong_model"], metadata["data_iter"], criterion, device, server_inputs, client_losses, client, client_targets))
                 threads.append(thread)
                 thread.start()
 
@@ -146,7 +143,7 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
                 thread.join()
             
             # compute and BP the strong and weak models based on all clients' mean loss for this batch
-            mean_client_loss = torch.stack(losses).mean()
+            mean_client_loss = torch.stack(client_losses).mean()
             mean_client_loss.backward()
             curr_clients_mean_loss += mean_client_loss.item()
             #print([loss.item() for loss in losses])
@@ -156,11 +153,11 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
                 # offload models to cpu
                 metadata["weak_model"], metadata["strong_model"] = metadata["weak_model"].to(torch.device("cpu")), metadata["strong_model"].to(torch.device("cpu"))
             # server-side forward propagation in parallel
-            losses = [None] * len(data_dict.keys())
+            server_losses = [None] * len(data_dict.keys())
             threads = []
             for idx, (inputs, targets) in enumerate(zip(server_inputs, client_targets)):
                 data_dict[idx]["server_model"].train()
-                thread = threading.Thread(target=forward_pass_server, args=(data_dict[idx]["server_model"], device, inputs, targets, criterion, losses, idx))
+                thread = threading.Thread(target=forward_pass_server, args=(data_dict[idx]["server_model"], device, inputs, targets, criterion, server_losses, idx))
                 threads.append(thread)
                 thread.start()
 
@@ -169,7 +166,7 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
                 thread.join()
 
             # compute and BP the server models based on all models' mean loss for this batch
-            mean_server_loss = torch.stack(losses).mean()
+            mean_server_loss = torch.stack(server_losses).mean()
             mean_server_loss.backward()
             curr_server_mean_loss += mean_server_loss.item()
 
@@ -185,8 +182,8 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
     return data_dict, avg_client_mean_loss, avg_server_mean_loss
 
 
-def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
-    stats_df = pd.DataFrame(columns=['epoch', "avg_client_mean_loss", "avg_server_mean_loss", 'client_precision', 'server_precision', 'client_recall', "server_recall", "client_f1_score", "server_f1_score"])
+def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq, save_dir):
+    stats_df = pd.DataFrame(columns=['epoch', "avg_client_mean_loss", "avg_server_mean_loss", "client_acc", "server_acc", 'client_precision', 'server_precision', 'client_recall', "server_recall", "client_f1_score", "server_f1_score"])
     for e in tqdm(range(epochs)):
         print(f"[+] Epoch: {e + 1}")
         # create a dataloader iterator for current epoch
@@ -213,7 +210,7 @@ def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
             server_accuracy, server_precision, server_recall, server_f1_score, client_accuracy, client_precision, client_recall, client_f1_score = evaluate_aggr_models(weak_model=data_dict[0]["weak_model"], strong_model=data_dict[0]["strong_model"], server_model=data_dict[0]["server_model"], test_dl_path="subset_data/sub_test.pth", device=device)
 
         stats_df.loc[len(stats_df)] = {'epoch': e + 1, 'avg_client_mean_loss': avg_client_mean_loss, 'avg_server_mean_loss': avg_server_mean_loss, 'client_acc': client_accuracy, 'server_acc': server_accuracy, 'client_precision': client_precision, 'server_precision': server_precision, 'client_recall': client_recall, 'server_recall': server_recall, 'client_f1_score': client_f1_score, 'server_f1_score': server_f1_score}
-        stats_df.to_csv("results.csv")
+        stats_df.to_csv(f"{save_dir}/results.csv")
     return data_dict
 
 def evaluate_aggr_models(weak_model: nn, strong_model: nn, server_model: nn, test_dl_path: str, device: torch.device):
@@ -255,13 +252,15 @@ def evaluate_aggr_models(weak_model: nn, strong_model: nn, server_model: nn, tes
 
 def main():
     cfg = read_config("src/config.yaml")
+    if not os.path.exists(f"experiments/{cfg['experiment_name']}"):
+        os.makedirs(f"experiments/{cfg['experiment_name']}")
     num_clients = cfg["weak_clients_num"] + cfg["strong_clients_num"]
     data_dict = create_dict(num_clients=num_clients)
     device = torch.device(cfg["device"])
     set_all_seeds(cfg["seed"])
     data_dict = populate_dict(data_dict=data_dict, seed=cfg["seed"], lr=cfg["lr"])
     criterion = nn.CrossEntropyLoss()
-    data_dict = train_both_parties(data_dict=data_dict, epochs=cfg["epochs"], criterion=criterion, device=device, fed_avg_freq=cfg["fed_avg_freq"])
+    data_dict = train_both_parties(data_dict=data_dict, epochs=cfg["epochs"], criterion=criterion, device=device, fed_avg_freq=cfg["fed_avg_freq"], save_dir=f"experiments/{cfg['experiment_name']}")
 
 if __name__ == "__main__":
     main()

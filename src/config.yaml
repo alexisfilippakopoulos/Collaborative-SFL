@@ -12,3 +12,5 @@ device: "cuda"
 lr: 0.001
 
 seed: 32
+
+experiment_name: 100_epochs_fmnist
