@@ -1,5 +1,26 @@
 # Collaboirative-SFL
 
+### Execute script
+
+#### Step 1: Create the conda environment
+```
+conda env create -f environment.yaml
+```
+
+#### Step 2: Create datasets
+```
+cd Collaborative-SFL
+python create_subsets.py
+```
+
+#### Step 3: Run main.py
+```
+python main.py
+```
+
+
+### Metadata
+
 We use a dictionary ***data_dict*** where each key-value pair is a client index and another dictionary ***data_dict[client_idx]***.<br><br>This secondary dictionary holds the following data for each client:
 <br>
 {***weak_model***: weak client model instance,<br>
