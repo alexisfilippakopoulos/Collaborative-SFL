@@ -15,7 +15,7 @@ python create_subsets.py
 
 #### Step 3: Run main.py
 ```
-python main.py
+python src/main.py
 ```
 
 

@@ -149,6 +149,7 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
             mean_client_loss = torch.stack(losses).mean()
             mean_client_loss.backward()
             curr_clients_mean_loss += mean_client_loss.item()
+            #print([loss.item() for loss in losses])
             # update client-side models
             for client, metadata in data_dict.items():
                 metadata['weak_optim'].step(), metadata['strong_optim'].step()
@@ -180,7 +181,7 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
 
     avg_client_mean_loss = round(curr_clients_mean_loss / data_dict[0]["num_batches"], 4)
     avg_server_mean_loss = round(curr_server_mean_loss / data_dict[0]["num_batches"], 4)
-
+    print(f"Train One Epoch Strong {np.linalg.norm(data_dict[0]['strong_model'].state_dict()['fc1.weight'].cpu().flatten(), ord=2)}\n")
     return data_dict, avg_client_mean_loss, avg_server_mean_loss
 
 
@@ -189,11 +190,11 @@ def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
     for e in tqdm(range(epochs)):
         print(f"[+] Epoch: {e + 1}")
         # create a dataloader iterator for current epoch
-        for _, metadata in data_dict.items():
-            metadata["data_iter"] = iter(metadata["dataloader"])
+        for client_dict in data_dict.values():
+            client_dict["data_iter"] = iter(client_dict["dataloader"])
         # train for one epoch
         data_dict, avg_client_mean_loss, avg_server_mean_loss = train_one_epoch(data_dict=data_dict, criterion=criterion, device=device)
-        
+        print(f"Train Both Parties Strong {np.linalg.norm(data_dict[0]['strong_model'].state_dict()['fc1.weight'].cpu().flatten(), ord=2)}\n")
         print(f"\t[+] Average Client-Side Mean Loss: {avg_client_mean_loss}")
         print(f"\t[+] Average Server-Side Mean Loss: {avg_server_mean_loss}")
         server_accuracy, server_precision, server_recall, server_f1_score = None, None, None, None
@@ -202,12 +203,12 @@ def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
         if (e + 1) % fed_avg_freq == 0:
             aggr_strong_model, aggr_weak_model = client_aggregation(data_dict=data_dict, device=device)
             aggr_server_model = server_aggregation(data_dict=data_dict, device=device)
-
+            print(f"After aggr strong: {np.linalg.norm(aggr_strong_model['fc1.weight'].cpu().flatten(), ord=2)}\n")
             # load aggregated weights on each model instance
-            for client, metadata in data_dict.items():
-                metadata["strong_model"].load_state_dict(aggr_strong_model)
-                metadata["weak_model"].load_state_dict(aggr_weak_model)
-                metadata["server_model"].load_state_dict(aggr_server_model)
+            for client_dict in data_dict.values():
+                client_dict["strong_model"].load_state_dict(aggr_strong_model)
+                client_dict["weak_model"].load_state_dict(aggr_weak_model)
+                client_dict["server_model"].load_state_dict(aggr_server_model)
 
             server_accuracy, server_precision, server_recall, server_f1_score, client_accuracy, client_precision, client_recall, client_f1_score = evaluate_aggr_models(weak_model=data_dict[0]["weak_model"], strong_model=data_dict[0]["strong_model"], server_model=data_dict[0]["server_model"], test_dl_path="subset_data/sub_test.pth", device=device)
 
@@ -218,6 +219,7 @@ def train_both_parties(data_dict, epochs, criterion, device, fed_avg_freq):
 def evaluate_aggr_models(weak_model: nn, strong_model: nn, server_model: nn, test_dl_path: str, device: torch.device):
     dataloader = DataLoader(dataset=torch.load(test_dl_path), batch_size=32, shuffle=False, num_workers=2, pin_memory=True)
     weak_model.to(device), strong_model.to(device), server_model.to(device)
+    print(f"Eval strong{np.linalg.norm(strong_model.state_dict()['fc1.weight'].cpu().flatten(), ord=2)}\n")
     weak_model.eval(), strong_model.eval(), server_model.eval()
     Y_true, Y_client, Y_server = [], [], []
     client_correct, server_correct, total = 0, 0, 0
@@ -250,8 +252,6 @@ def evaluate_aggr_models(weak_model: nn, strong_model: nn, server_model: nn, tes
 
     return server_accuracy, server_precision, server_recall, server_f1_score, client_accuracy, client_precision, client_recall, client_f1_score
             
-
-
 
 def main():
     cfg = read_config("src/config.yaml")
