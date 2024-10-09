@@ -173,14 +173,14 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
             
             # compute and BP the strong and weak models based on all clients' mean loss for this batch
             mean_client_loss = torch.stack(client_losses).mean()
-            mean_client_loss.backward()
+            #mean_client_loss.backward()
             curr_clients_mean_loss += mean_client_loss.item()
             #print([loss.item() for loss in losses])
             # update client-side models
-            for client, metadata in data_dict.items():
+            """for client, metadata in data_dict.items():
                 metadata['weak_optim'].step(), metadata['strong_optim'].step()
                 # offload models to cpu
-                metadata["weak_model"], metadata["strong_model"] = metadata["weak_model"].to(torch.device("cpu")), metadata["strong_model"].to(torch.device("cpu"))
+                metadata["weak_model"], metadata["strong_model"] = metadata["weak_model"].to(torch.device("cpu")), metadata["strong_model"].to(torch.device("cpu"))"""
             # server-side forward propagation in parallel
             server_losses = [None] * len(data_dict.keys())
             threads = []
@@ -196,11 +196,14 @@ def train_one_epoch(data_dict: dict[dict], criterion: nn, device: torch.device):
 
             # compute and BP the server models based on all models' mean loss for this batch
             mean_server_loss = torch.stack(server_losses).mean()
-            mean_server_loss.backward()
+            #mean_server_loss.backward()
             curr_server_mean_loss += mean_server_loss.item()
+            global_loss = 0.5 * mean_client_loss + 0.5 * mean_server_loss
+            global_loss.backward()
 
             # update server-side models
             for client, metadata in data_dict.items():
+                metadata['weak_optim'].step(), metadata['strong_optim'].step()
                 metadata['server_optim'].step()
                 # offload models to cpu
                 metadata['server_model'] = metadata['server_model'].to(torch.device("cpu"))
