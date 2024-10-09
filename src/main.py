@@ -14,7 +14,12 @@ import os
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-def create_dict(num_clients):
+def create_dict(num_clients) -> dict[dict]:
+    """
+    Creates the main data structure of the program. It is a dictionary of dictionaries, one for each client.
+    For each client we hold each model instance (client-side split model, client-side classifier, server-side instance) along with its optimizer.
+    We also hold its data_iterator along with some metadata 
+    """
     data_dict = {}
     for i in range(num_clients):
         data_dict[i] = {"weak_model": None, "strong_model": None, "server_model": None,
@@ -32,10 +37,16 @@ def set_all_seeds(seed) -> None:
     torch.backends.cudnn.benchmark = False
 
 def load_data(subset_path, batch_size, shuffle):
+        """
+        Loads a subset from a .pth file and returns its dataloader, the number of samples and batches.
+        """
         subset = torch.load(f=subset_path)
         return DataLoader(subset, batch_size=batch_size, shuffle=shuffle, num_workers=2, pin_memory=True), int(len(subset)), int(np.ceil(len(subset) / batch_size))
 
 def populate_dict(data_dict, seed, lr):
+    """
+    We instanciate all models and optimizers and populate our data structure.
+    """
     print(f"[+] Instanciating models and optimizers")
     for cid in tqdm(data_dict.keys()):
         torch.manual_seed(seed)
@@ -51,11 +62,17 @@ def populate_dict(data_dict, seed, lr):
     return data_dict
 
 def read_config(file_path):
+    """
+    Read the config.yaml file
+    """
     with open(file_path, 'r') as file:
         cfg = safe_load(file)
     return cfg
 
 def forward_pass_clients(weak_model, strong_model, iterator, criterion, device, server_inputs, losses, idx, list_of_targets):
+    """
+    Forward pass of client-side. Passing X through the client-side split model and classifier and computing the loss.
+    """
     inputs, targets = next(iterator)
     list_of_targets[idx] = targets
     inputs, targets = inputs.to(device), targets.to(device)
@@ -68,6 +85,9 @@ def forward_pass_clients(weak_model, strong_model, iterator, criterion, device, 
     return
 
 def forward_pass_server(server_model: nn.Module, device: torch.device, inputs: torch.tensor, targets: torch.tensor, criterion: nn, losses: list, idx: int):
+    """
+    Forward pass of server-side. Passing X through the sever-side split model and computing the loss.
+    """
     server_model.to(device)
     inputs, targets = inputs.to(device), targets.to(device)
     outputs = server_model(inputs)
@@ -76,6 +96,9 @@ def forward_pass_server(server_model: nn.Module, device: torch.device, inputs: t
     return
 
 def federated_averaging(models: list[dict], datasizes: list[int], device: torch.device):
+    """
+    Federated Averaging aggregation
+    """
     avg_weights = {}
     total_data = sum(datasizes)
     for i, model in enumerate(models):
@@ -89,6 +112,9 @@ def federated_averaging(models: list[dict], datasizes: list[int], device: torch.
 
 
 def client_aggregation(data_dict: dict[dict], device):
+    """
+    Function that aggregates the client-side split model and classifier
+    """
     strong_model_weights = [None] * len(data_dict.keys())
     weak_model_weights = [None] *  len(data_dict.keys())
     datasizes = [None] *  len(data_dict.keys())
@@ -105,6 +131,9 @@ def client_aggregation(data_dict: dict[dict], device):
     return aggr_strong_model, aggr_weak_model    
 
 def server_aggregation(data_dict: dict[dict], device):
+    """
+    Function that aggregates the server-side split model
+    """
     # lists to save number of data samples and model weights for each client
     datasizes = [None] *  len(data_dict.keys())
     server_model_weights = [None] * len(data_dict.keys())
